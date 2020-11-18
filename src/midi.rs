@@ -1,7 +1,7 @@
 mod error;
 mod input;
-mod manager;
+mod output;
 
 pub use error::MidiError;
-pub use input::message_received;
-pub use manager::Manager;
+pub use input::InputManager;
+pub use output::OutputManager;

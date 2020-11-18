@@ -9,4 +9,4 @@ edition = "2018"
 [dependencies]
 midir = "0.7"
 clap = "2.33"
-dasp_ring_buffer = "0.11"
+crossbeam = "0.8"

@@ -2,15 +2,14 @@ use clap::Arg;
 
 mod midi;
 mod term;
-mod worker;
 
 fn list_devices() {
     println!("midi in:");
-    for name in midi::Manager::inp_devices() {
+    for name in midi::InputManager::devices() {
         println!(" - {}", name);
     }
     println!("midi out:");
-    for name in midi::Manager::out_devices() {
+    for name in midi::OutputManager::devices() {
         println!(" - {}", name);
     }
 }
@@ -44,20 +43,42 @@ fn main() {
         return;
     }
 
-    let input = matches.value_of("input");
-    let output = matches.value_of("output");
-
     let (tx, rx) = std::sync::mpsc::channel();
-    worker::start_worker_thread(rx);
+    let mut input_manager = midi::InputManager::new(tx);
+    let mut output_manager = midi::OutputManager::new(rx);
 
-    let mut man = midi::Manager::new(tx);
-    if let Some(name) = input {
-        man.open_inp(name).unwrap();
-    }
-    if let Some(name) = output {
-        man.open_out(name).unwrap();
+    if let Some(name) = matches.value_of("input") {
+        match input_manager.open(name) {
+            Ok(_) => {}
+            Err(_) => {
+                println!("Couldn't open MIDI input port '{}'.", name);
+                return;
+            }
+        }
+    } else {
+        println!("Nothing to do!");
+        return;
     }
 
-    print!("Press enter to exit.");
-    term::wait_for_return();
+    if let Some(name) = matches.value_of("output") {
+        match output_manager.open(name) {
+            Ok(_) => {}
+            Err(_) => {
+                println!("Couldn't open MIDI output port '{}'.", name);
+                return;
+            }
+        }
+    }
+
+    crossbeam::scope(move |s| {
+        s.spawn(move |_| output_manager.work());
+
+        print!("Press enter to exit.");
+        term::wait_for_return();
+
+        // Sequence of events here: all senders are destroyed -> receiver
+        // returns error -> worker thread finishes -> worker thread joins
+        // main thread -> program ends.
+        drop(input_manager);
+    }).expect("Thread error!");
 }

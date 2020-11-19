@@ -3,12 +3,12 @@ use midir::{MidiInput, MidiInputConnection};
 use super::MidiError;
 
 pub struct InputManager {
-    sender: mpsc::Sender<u8>,
-    connections: Vec<MidiInputConnection<mpsc::Sender<u8>>>,
+    sender: mpsc::Sender<[u8; 4]>,
+    connections: Vec<MidiInputConnection<mpsc::Sender<[u8; 4]>>>,
 }
 
 impl InputManager {
-    pub fn new(sender: mpsc::Sender<u8>) -> Self {
+    pub fn new(sender: mpsc::Sender<[u8; 4]>) -> Self {
         InputManager {
             sender,
             connections: Vec::new(),
@@ -47,12 +47,21 @@ impl InputManager {
 }
 
 fn message_received(timestamp: u64, bytes: &[u8],
-    sender: &mut mpsc::Sender<u8>)
+    sender: &mut mpsc::Sender<[u8; 4]>)
 {
     print!("[{:>10}]", timestamp);
     for &b in bytes {
         print!(" {:X}", b);
-        sender.send(b).expect("Couldn't process incoming MIDI message.");
     }
     println!();
+
+    if bytes.len() > 3 {
+        return;
+    }
+
+    let mut out_message = [0u8; 4];
+    out_message[0..bytes.len()].copy_from_slice(bytes);
+    out_message[3] = bytes.len() as u8;
+
+    sender.send(out_message).expect("Couldn't process incoming MIDI message.");
 }

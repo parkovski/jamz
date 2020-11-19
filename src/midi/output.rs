@@ -3,12 +3,12 @@ use midir::{MidiOutput, MidiOutputConnection};
 use super::MidiError;
 
 pub struct OutputManager {
-    pub receiver: mpsc::Receiver<u8>,
+    pub receiver: mpsc::Receiver<[u8; 4]>,
     connections: Vec<MidiOutputConnection>,
 }
 
 impl OutputManager {
-    pub fn new(receiver: mpsc::Receiver<u8>) -> Self {
+    pub fn new(receiver: mpsc::Receiver<[u8; 4]>) -> Self {
         OutputManager {
             receiver,
             connections: Vec::new(),
@@ -43,15 +43,24 @@ impl OutputManager {
         Err(MidiError::PortNotFound)
     }
 
-    pub fn work(&self) {
+    pub fn work(&mut self) {
         println!("begin worker thread");
         loop {
-            let data = match self.receiver.recv() {
-                Ok(data) => data,
+            let bytes = match self.receiver.recv() {
+                Ok(bytes) => bytes,
                 Err(_) => return,
             };
 
-            print!(" {:X}", data);
+            if self.connections.len() > 0 {
+                self.connections[0].send(&bytes[0..bytes[3] as usize])
+                    .expect("Send error!");
+            } else {
+                print!("Received");
+                for b in bytes[0..bytes[3] as usize].iter() {
+                    print!(" {:X}", b);
+                }
+                println!();
+            }
         }
     }
 }

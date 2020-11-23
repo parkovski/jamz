@@ -225,7 +225,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "crossbeam",
+ "lazy_static",
  "midir",
+ "winapi",
 ]
 
 [[package]]

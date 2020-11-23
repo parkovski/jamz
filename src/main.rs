@@ -1,6 +1,7 @@
 use clap::Arg;
 
 mod midi;
+mod os;
 mod term;
 
 fn list_devices() {
@@ -43,9 +44,11 @@ fn main() {
         return;
     }
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut input_manager = midi::InputManager::new(tx);
-    let mut output_manager = midi::OutputManager::new(rx);
+    let (tx_out, rx_out) = std::sync::mpsc::channel();
+    let (tx_seq, rx_seq) = std::sync::mpsc::channel();
+    let mut sequencer = midi::Sequencer::new(rx_seq, tx_out.clone());
+    let mut input_manager = midi::InputManager::new(tx_out, tx_seq);
+    let mut output_manager = midi::OutputManager::new(rx_out);
 
     if let Some(name) = matches.value_of("input") {
         match input_manager.open(name) {
@@ -55,9 +58,6 @@ fn main() {
                 return;
             }
         }
-    } else {
-        println!("Nothing to do!");
-        return;
     }
 
     if let Some(name) = matches.value_of("output") {
@@ -71,7 +71,8 @@ fn main() {
     }
 
     crossbeam::scope(move |s| {
-        s.spawn(move |_| output_manager.work());
+        s.spawn(move |_| output_manager.run());
+        s.spawn(move |_| sequencer.run());
 
         print!("Press enter to exit.");
         term::wait_for_return();

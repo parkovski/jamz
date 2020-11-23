@@ -1,16 +1,34 @@
 use std::sync::mpsc;
 use midir::{MidiInput, MidiInputConnection};
-use super::MidiError;
+use super::{Message, MidiError};
+
+struct InputState {
+    pub out: mpsc::Sender<Message>,
+    pub seq: mpsc::Sender<Message>,
+}
+
+impl InputState {
+    pub fn new(out: mpsc::Sender<Message>, seq: mpsc::Sender<Message>) -> Self
+    {
+        InputState {
+            out,
+            seq
+        }
+    }
+}
 
 pub struct InputManager {
-    sender: mpsc::Sender<[u8; 4]>,
-    connections: Vec<MidiInputConnection<mpsc::Sender<[u8; 4]>>>,
+    out: mpsc::Sender<Message>,
+    seq: mpsc::Sender<Message>,
+    connections: Vec<MidiInputConnection<InputState>>,
 }
 
 impl InputManager {
-    pub fn new(sender: mpsc::Sender<[u8; 4]>) -> Self {
+    pub fn new(out: mpsc::Sender<Message>, seq: mpsc::Sender<Message>) -> Self
+    {
         InputManager {
-            sender,
+            out,
+            seq,
             connections: Vec::new(),
         }
     }
@@ -36,7 +54,8 @@ impl InputManager {
             let port_name = midi_inp.port_name(&p)?;
             if name == port_name {
                 let conn = midi_inp.connect(
-                    &p, &port_name, message_received, self.sender.clone()
+                    &p, &port_name, message_received,
+                    InputState::new(self.out.clone(), self.seq.clone())
                 )?;
                 self.connections.push(conn);
                 return Ok(next);
@@ -46,9 +65,7 @@ impl InputManager {
     }
 }
 
-fn message_received(timestamp: u64, bytes: &[u8],
-    sender: &mut mpsc::Sender<[u8; 4]>)
-{
+fn message_received(timestamp: u64, bytes: &[u8], state: &mut InputState) {
     print!("[{:>10}]", timestamp);
     for &b in bytes {
         print!(" {:X}", b);
@@ -63,5 +80,6 @@ fn message_received(timestamp: u64, bytes: &[u8],
     out_message[0..bytes.len()].copy_from_slice(bytes);
     out_message[3] = bytes.len() as u8;
 
-    sender.send(out_message).expect("Couldn't process incoming MIDI message.");
+    state.out.send(out_message)
+        .expect("Couldn't process incoming MIDI message.");
 }

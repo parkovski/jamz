@@ -1,14 +1,14 @@
 use std::sync::mpsc;
 use midir::{MidiOutput, MidiOutputConnection};
-use super::MidiError;
+use super::{Message, MidiError};
 
 pub struct OutputManager {
-    pub receiver: mpsc::Receiver<[u8; 4]>,
+    pub receiver: mpsc::Receiver<Message>,
     connections: Vec<MidiOutputConnection>,
 }
 
 impl OutputManager {
-    pub fn new(receiver: mpsc::Receiver<[u8; 4]>) -> Self {
+    pub fn new(receiver: mpsc::Receiver<Message>) -> Self {
         OutputManager {
             receiver,
             connections: Vec::new(),
@@ -43,20 +43,22 @@ impl OutputManager {
         Err(MidiError::PortNotFound)
     }
 
-    pub fn work(&mut self) {
+    pub fn run(mut self) {
         println!("begin worker thread");
         loop {
-            let bytes = match self.receiver.recv() {
-                Ok(bytes) => bytes,
+            let data = match self.receiver.recv() {
+                Ok(data) => data,
                 Err(_) => return,
             };
 
+            let bytes = &data[0..data[3] as usize];
+
             if self.connections.len() > 0 {
-                self.connections[0].send(&bytes[0..bytes[3] as usize])
+                self.connections[0].send(bytes)
                     .expect("Send error!");
             } else {
                 print!("Received");
-                for b in bytes[0..bytes[3] as usize].iter() {
+                for &b in bytes {
                     print!(" {:X}", b);
                 }
                 println!();

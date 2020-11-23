@@ -10,3 +10,7 @@ edition = "2018"
 midir = "0.7"
 clap = "2.33"
 crossbeam = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["everything"] }
+lazy_static = "1.4.0"

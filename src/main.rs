@@ -1,8 +1,8 @@
+use std::io::{self, Read};
 use clap::Arg;
 
 mod midi;
 mod os;
-mod term;
 
 fn list_devices() {
     println!("midi in:");
@@ -47,7 +47,7 @@ fn main() {
     let (tx_out, rx_out) = std::sync::mpsc::channel();
     let (tx_seq, rx_seq) = std::sync::mpsc::channel();
     let mut sequencer = midi::Sequencer::new(rx_seq, tx_out.clone());
-    let mut input_manager = midi::InputManager::new(tx_out, tx_seq);
+    let mut input_manager = midi::InputManager::new(tx_out, tx_seq.clone());
     let mut output_manager = midi::OutputManager::new(rx_out);
 
     if let Some(name) = matches.value_of("input") {
@@ -74,8 +74,27 @@ fn main() {
         s.spawn(move |_| output_manager.run());
         s.spawn(move |_| sequencer.run());
 
-        print!("Press enter to exit.");
-        term::wait_for_return();
+        println!("Options:");
+        println!("  q > quit");
+        println!("  p > start playing");
+        println!("  x > stop playing");
+        let mut stdin = io::stdin();
+        let mut b = [0u8];
+        loop {
+            match stdin.read(&mut b) {
+                Ok(1) => {
+                    match b[0] & !0x20 {
+                        //13 => break,
+                        81 => break,
+                        80 => { tx_seq.send([0xFA, 0, 0, 1]).unwrap(); },
+                        88 => { tx_seq.send([0xFC, 0, 0, 1]).unwrap(); },
+                        _ => {}
+                    }
+                }
+                Err(_) => break,
+                _ => continue,
+            }
+        }
 
         // Sequence of events here: all senders are destroyed -> receiver
         // returns error -> worker thread finishes -> worker thread joins

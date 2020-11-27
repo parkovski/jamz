@@ -78,6 +78,7 @@ fn main() {
         println!("  q > quit");
         println!("  p > start playing");
         println!("  x > stop playing");
+        println!("  r > resume from last stopped point");
         let mut stdin = io::stdin();
         let mut b = [0u8];
         loop {
@@ -87,6 +88,7 @@ fn main() {
                         //13 => break,
                         81 => break,
                         80 => { tx_seq.send([0xFA, 0, 0, 1]).unwrap(); },
+                        82 => { tx_seq.send([0xFB, 0, 0, 1]).unwrap(); },
                         88 => { tx_seq.send([0xFC, 0, 0, 1]).unwrap(); },
                         _ => {}
                     }

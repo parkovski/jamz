@@ -44,7 +44,7 @@ impl OutputManager {
     }
 
     pub fn run(mut self) {
-        println!("begin worker thread");
+        println!("begin output thread");
         loop {
             let data = match self.receiver.recv() {
                 Ok(data) => data,

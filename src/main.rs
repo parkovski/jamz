@@ -46,7 +46,7 @@ fn main() {
 
     let (tx_out, rx_out) = std::sync::mpsc::channel();
     let (tx_seq, rx_seq) = std::sync::mpsc::channel();
-    let mut sequencer = midi::Sequencer::new(rx_seq, tx_out.clone());
+    let sequencer = midi::Sequencer::new(rx_seq, tx_out.clone());
     let mut input_manager = midi::InputManager::new(tx_out, tx_seq.clone());
     let mut output_manager = midi::OutputManager::new(rx_out);
 
@@ -76,20 +76,44 @@ fn main() {
 
         println!("Options:");
         println!("  q > quit");
-        println!("  p > start playing");
+        println!("  p > play/pause");
         println!("  x > stop playing");
-        println!("  r > resume from last stopped point");
+        println!("  r > toggle recording");
         let mut stdin = io::stdin();
         let mut b = [0u8];
+        let mut playing = false;
+        let mut full_stop = false;
         loop {
             match stdin.read(&mut b) {
                 Ok(1) => {
                     match b[0] & !0x20 {
-                        //13 => break,
                         81 => break,
-                        80 => { tx_seq.send([0xFA, 0, 0, 1]).unwrap(); },
-                        82 => { tx_seq.send([0xFB, 0, 0, 1]).unwrap(); },
-                        88 => { tx_seq.send([0xFC, 0, 0, 1]).unwrap(); },
+                        80 => {
+                            if playing {
+                                // Stop
+                                tx_seq.send([0xFC, 0, 0, 1]).unwrap();
+                                playing = false;
+                                full_stop = false;
+                            } else if full_stop {
+                                // Start
+                                tx_seq.send([0xFA, 0, 0, 1]).unwrap();
+                                playing = true;
+                            } else {
+                                // Continue
+                                tx_seq.send([0xFB, 0, 0, 1]).unwrap();
+                                playing = true;
+                            }
+                        },
+                        82 => {
+                            // Toggle recording
+                            tx_seq.send([0xF9, 0, 0, 1]).unwrap();
+                        },
+                        88 => {
+                            // Stop
+                            tx_seq.send([0xFC, 0, 0, 1]).unwrap();
+                            playing = false;
+                            full_stop = true;
+                        },
                         _ => {}
                     }
                 }

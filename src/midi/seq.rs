@@ -1,11 +1,11 @@
 use std::sync::mpsc;
-use std::collections::HashMap;
 use super::Message;
 
 use crate::os::{
     monotonic_now, monotonic_sleep, InitRealTimeThread
 };
 
+const MIDI_UNDEF_TOGGLE_RECORD: u8 = 0xF9;
 const MIDI_START: u8 = 0xFA;
 const MIDI_CONTINUE: u8 = 0xFB;
 const MIDI_STOP: u8 = 0xFC;
@@ -15,7 +15,7 @@ const MIDI_NOTE_OFF: u8 = 0x80;
 
 const MAX_SLEEP: i64 = 50_000;
 
-pub type MessageWithTime = (i64, Message);
+pub type MessageWithTime = (i32, Message);
 
 #[derive(Debug)]
 enum PlayState {
@@ -31,10 +31,16 @@ pub struct Sequencer {
     message_index: usize,
     now: i64,
     target_time: i64,
+    prev_target: i64,
     pause_offset: i64,
-    notes_on: [u8; 256],
+    // When paused, this is the length of time that will be spent recording.
+    // Once recording starts, this is shifted to become the time counter
+    // value at which recording ends.
+    recording_limit: i64,
+    notes_on: [u8; 128],
     bpm: i32,
     ppq: i32,
+    recording: bool,
 }
 
 impl Sequencer {
@@ -47,16 +53,19 @@ impl Sequencer {
             messages: Self::hard_coded_messages(),
             message_index: 0,
             now: 0,
-            target_time: 0,
+            target_time: i64::MAX,
+            prev_target: 0,
             pause_offset: 0,
-            notes_on: [0; 256],
+            recording_limit: i64::MAX,
+            notes_on: [0; 128],
             bpm: 135,
             ppq: 96,
+            recording: false,
         }
     }
 
     fn hard_coded_messages() -> Vec<MessageWithTime> {
-        vec![
+        let messages: &[MessageWithTime] = &[
             (0,  [0x90, 0x2D, 0x64, 3]),
             (96, [0x80, 0x2D, 0,    3]),
 
@@ -74,10 +83,22 @@ impl Sequencer {
 
             (0,  [0x90, 0x34, 0x64, 3]),
             (96, [0x80, 0x34, 0,    3]),
-        ]
+        ];
+
+        let mut vec = Vec::with_capacity(250);
+        for m in messages {
+            vec.push(*m);
+        }
+        vec
     }
 
+    // If recording is not bounded, record_end_time should be set to i64::MAX.
     fn play_loop_step(&mut self) -> PlayState {
+        if self.recording && self.recording_limit < self.now {
+            println!("done recording");
+            self.recording = false;
+        }
+
         if self.target_time > self.now {
             // The next message is still in the future, see if there
             // is an incoming message
@@ -126,6 +147,7 @@ impl Sequencer {
             self.message_index = 0;
         }
         // Update target time for this message.
+        self.prev_target = self.target_time;
         self.target_time += self.message_time();
     }
 
@@ -135,25 +157,49 @@ impl Sequencer {
         }
     }
 
-    fn pulses_to_us(&self, pulses: i64) -> i64 {
+    fn pulses_to_us(&self, pulses: i32) -> i64 {
         // quarters = pulses / ppq
         // minutes = quarters / bpm
         // seconds = minutes * 60
         // us = seconds * 1_000_000
         // us = sec * 60_000_000 * ((pulses / ppq) / bpm)
-        60_000_000 * pulses / ((self.bpm * self.ppq) as i64)
+        60_000_000 * (pulses as i64) / ((self.bpm * self.ppq) as i64)
+    }
+
+    fn us_to_pulses(&self, us: i64) -> i32 {
+        let pulses = us * ((self.bpm * self.ppq) as i64) / 60_000_000;
+        debug_assert!(pulses <= i32::MAX as i64);
+        pulses as i32
     }
 
     fn message_time(&self) -> i64 {
-        self.pulses_to_us(self.messages[self.message_index].0 as i64)
+        self.pulses_to_us(self.messages[self.message_index].0)
     }
 
     fn on_playing_message(&mut self, msg: &Message) -> PlayState {
         if msg[3] == 1 && msg[0] == MIDI_STOP {
-            self.pause_offset = monotonic_now() -
+            self.now = monotonic_now();
+            self.pause_offset = self.now -
                 (self.target_time - self.message_time());
+            if self.recording && self.recording_limit != i64::MAX {
+                self.recording_limit -= self.now;
+                if self.recording_limit < 0 {
+                    self.recording_limit = 0;
+                    self.recording = false;
+                }
+            }
             self.send_pause_messages();
             PlayState::Paused
+        } else if self.recording && msg[3] == 3 &&
+            (msg[0] == MIDI_NOTE_ON || msg[0] == MIDI_NOTE_OFF)
+        {
+            self.now = monotonic_now();
+            let time = self.us_to_pulses(self.now - self.prev_target);
+            self.prev_target = self.now;
+            //self.messages.push((time, msg.clone()));
+            println!("note {} @ {}",
+                if msg[0] == MIDI_NOTE_ON { "on" } else { "off" }, time);
+            PlayState::Playing
         } else {
             PlayState::Playing
         }
@@ -163,15 +209,35 @@ impl Sequencer {
         if msg[3] == 1 && msg[0] == MIDI_START {
             self.message_index = 0;
             self.now = monotonic_now();
+            self.prev_target = self.target_time;
             self.target_time = self.now + self.message_time();
             self.reset_notes_on();
+            if self.recording {
+                //self.messages.clear();
+                if self.recording_limit != i64::MAX {
+                    self.recording_limit += self.now;
+                }
+            }
             PlayState::Playing
         } else if msg[3] == 1 && msg[0] == MIDI_CONTINUE {
             self.now = monotonic_now();
+            self.prev_target = self.target_time;
             self.target_time = self.now + self.message_time()
                 - self.pause_offset;
             self.send_resume_messages();
+            if self.recording {
+                //self.messages.clear();
+                if self.recording_limit != i64::MAX {
+                    self.recording_limit += self.now;
+                }
+            }
             PlayState::Playing
+        } else if msg[3] == 1 && msg[0] == MIDI_UNDEF_TOGGLE_RECORD {
+            self.recording = !self.recording;
+            self.recording_limit = self.pulses_to_us(384);
+            println!("recording {}",
+                if self.recording { "enabled" } else { "disabled" });
+            PlayState::Paused
         } else {
             PlayState::Paused
         }

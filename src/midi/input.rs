@@ -80,6 +80,8 @@ fn message_received(timestamp: u64, bytes: &[u8], state: &mut InputState) {
     out_message[0..bytes.len()].copy_from_slice(bytes);
     out_message[3] = bytes.len() as u8;
 
-    state.out.send(out_message)
+    state.out.send(out_message.clone())
+        .expect("Couldn't process incoming MIDI message.");
+    state.seq.send(out_message)
         .expect("Couldn't process incoming MIDI message.");
 }

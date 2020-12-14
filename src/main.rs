@@ -3,6 +3,7 @@ use clap::Arg;
 
 mod midi;
 mod os;
+mod sched;
 
 fn list_devices() {
     println!("midi in:");

@@ -1,9 +1,6 @@
 use std::sync::mpsc;
 use super::Message;
-
-use crate::os::{
-    monotonic_now, RealTimeThreadContext
-};
+use crate::sched::Scheduler;
 
 const MIDI_UNDEF_TOGGLE_RECORD: u8 = 0xF9;
 const MIDI_START: u8 = 0xFA;
@@ -13,117 +10,98 @@ const MIDI_STOP: u8 = 0xFC;
 const MIDI_NOTE_ON: u8 = 0x90;
 const MIDI_NOTE_OFF: u8 = 0x80;
 
-pub type MessageWithTime = (i32, Message);
+pub type MessageWithTime = (u32, Message);
 
-struct Scheduler {
-    rtthread: Option<RealTimeThreadContext>,
-    // Is the scheduler active or paused?
-    active: bool,
-    // Current time
-    current_time: i64,
-    // Time to execute the next event
-    target_time: i64,
-    // Time the previous event was executed
-    prev_target: i64,
-    // The amount of the current time between messages that passed before
-    // the pause. In the diagram, with t0 = the previous message time,
-    // t1 = the next message time, and tp = the pause time, this is tp - t0.
-    // |---+---|
-    // t0  tp  t1
-    pause_offset: i64,
+struct Pattern {
+    pub messages: Vec<MessageWithTime>,
+    pub length: u32,
 }
 
-impl Scheduler {
-    pub const MAX_SLEEP: i64 = 50_000;
+impl Pattern {
+    pub fn hard_coded_1() -> Self {
+        Pattern {
+            messages: vec![
+                (0,   [0x90, 0x2D, 0x64, 3]),
+                (96,  [0x80, 0x2D, 0,    3]),
 
-    pub fn new() -> Self {
-        Scheduler {
-            rtthread: None,
-            active: false,
-            current_time: 0,
-            target_time: 0,
-            prev_target: 0,
-            pause_offset: 0,
+                (96,  [0x90, 0x34, 0x64, 3]),
+                (144, [0x80, 0x34, 0,    3]),
+
+                (144, [0x90, 0x2D, 0x64, 3]),
+                (192, [0x80, 0x2D, 0,    3]),
+
+                (192, [0x90, 0x30, 0x64, 3]),
+                (240, [0x80, 0x30, 0,    3]),
+
+                (240, [0x90, 0x36, 0x64, 3]),
+                (288, [0x80, 0x36, 0,    3]),
+
+                (288, [0x90, 0x34, 0x64, 3]),
+                (384, [0x80, 0x34, 0,    3]),
+            ],
+            length: 384,
         }
     }
 
-    pub fn init_real_time_thread(&mut self) {
-        self.rtthread = Some(RealTimeThreadContext::new());
-    }
+    pub fn hard_coded_2() -> Self {
+        Pattern {
+            messages: vec![
+                (48,  [0x90, 0x39, 0x64, 3]),
+                (96,  [0x80, 0x39, 0x64, 3]),
 
-    pub fn is_active(&self) -> bool {
-        self.active
-    }
+                (96,  [0x90, 0x3C, 0x64, 3]),
+                (144, [0x80, 0x3C, 0x64, 3]),
 
-    /// Save the amount of elapsed time since the last message and unset the
-    /// active flag. This updates the cached current time.
-    pub fn pause(&mut self) {
-        self.pause_offset = self.now() - self.prev_target;
-        self.active = false;
-    }
+                (144, [0x90, 0x40, 0x64, 3]),
+                (192, [0x80, 0x40, 0x64, 3]),
 
-    /// Update relevant time variables as if the pause didn't happen and set
-    /// the active flag. This updates the cached current time.
-    pub fn resume(&mut self) {
-        let target_delta = self.target_time - self.prev_target;
-        self.prev_target = self.now() - self.pause_offset;
-        self.target_time = self.prev_target + target_delta;
-        self.active = true;
-    }
+                (192, [0x90, 0x3E, 0x64, 3]),
+                (240, [0x80, 0x3E, 0x64, 3]),
 
-    /// Reset target times and pause offset.
-    pub fn reset(&mut self) {
-        self.pause_offset = 0;
-        self.prev_target = 0;
-        self.target_time = 0;
-    }
+                (240, [0x90, 0x3C, 0x64, 3]),
+                (288, [0x80, 0x3C, 0x64, 3]),
 
-    /// Updates and returns the cached current time. For use when the time may
-    /// not have been recently updated.
-    pub fn now(&mut self) -> i64 {
-        self.current_time = monotonic_now();
-        self.current_time
-    }
+                (288, [0x90, 0x39, 0x64, 3]),
+                (336, [0x80, 0x39, 0x64, 3]),
 
-    /// True if the cached current time is past the next target time.
-    pub fn is_target_time(&self) -> bool {
-        self.current_time > self.target_time
-    }
+                (336, [0x90, 0x3C, 0x64, 3]),
+                (528, [0x80, 0x3C, 0x64, 3]),
 
-    /// Sleep and update the cached current time. The sleep time is
-    /// `MAX_SLEEP` unless the upcoming target time is sooner.
-    pub fn sleep_for_target(&mut self) {
-        let time = std::cmp::max(self.target_time - self.now(),
-            Self::MAX_SLEEP);
-        //self.current_time = monotonic_sleep(time);
-        self.rtthread.as_ref().unwrap().sleep(time);
-        self.current_time = monotonic_now();
-    }
+                (528, [0x90, 0x3E, 0x64, 3]),
+                (624, [0x80, 0x3E, 0x64, 3]),
 
-    /// Sleep for `MAX_SLEEP` and updates the cached current time.
-    pub fn sleep_for_wait(&mut self) {
-        //self.current_time = monotonic_sleep(Self::MAX_SLEEP);
-        self.rtthread.as_ref().unwrap().sleep(Self::MAX_SLEEP);
-        self.current_time = monotonic_now();
+                (624, [0x90, 0x40, 0x64, 3]),
+                (768, [0x80, 0x40, 0x64, 3]),
+            ],
+            length: 768,
+        }
     }
+}
 
-    /// Update the target time to the current target time plus the target
-    /// delta.
-    pub fn next_target(&mut self, target_delta: i64) {
-        self.prev_target = self.target_time;
-        self.target_time += target_delta;
+struct Cursor {
+    pub pattern_index: usize,
+    pub message_index: usize,
+    // The master song time that corresponds to the pattern start.
+    pub offset: u32,
+}
+
+impl Cursor {
+    pub fn new(pattern_index: usize) -> Self {
+        Cursor {
+            pattern_index,
+            message_index: 0,
+            offset: 0,
+        }
     }
 }
 
 pub struct Sequencer {
     receiver: mpsc::Receiver<Message>,
     sender: mpsc::Sender<Message>,
-    messages: Vec<MessageWithTime>,
-    message_index: usize,
+    patterns: Vec<Pattern>,
+    cursors: Vec<Cursor>,
     scheduler: Scheduler,
     notes_on: [u8; 128],
-    bpm: i32,
-    ppq: i32,
 }
 
 impl Sequencer {
@@ -133,41 +111,11 @@ impl Sequencer {
         Sequencer {
             receiver,
             sender,
-            messages: Self::hard_coded_messages(),
-            message_index: 0,
-            scheduler: Scheduler::new(),
+            patterns: vec![Pattern::hard_coded_1(), Pattern::hard_coded_2()],
+            cursors: vec![Cursor::new(0), Cursor::new(1)],
+            scheduler: Scheduler::new(135000, 96),
             notes_on: [0; 128],
-            bpm: 135,
-            ppq: 96,
         }
-    }
-
-    fn hard_coded_messages() -> Vec<MessageWithTime> {
-        let messages: &[MessageWithTime] = &[
-            (0,  [0x90, 0x2D, 0x64, 3]),
-            (96, [0x80, 0x2D, 0,    3]),
-
-            (0,  [0x90, 0x34, 0x64, 3]),
-            (48, [0x80, 0x34, 0,    3]),
-
-            (0,  [0x90, 0x2D, 0x64, 3]),
-            (48, [0x80, 0x2D, 0,    3]),
-
-            (0,  [0x90, 0x30, 0x64, 3]),
-            (48, [0x80, 0x30, 0,    3]),
-
-            (0,  [0x90, 0x36, 0x64, 3]),
-            (48, [0x80, 0x36, 0,    3]),
-
-            (0,  [0x90, 0x34, 0x64, 3]),
-            (96, [0x80, 0x34, 0,    3]),
-        ];
-
-        let mut vec = Vec::with_capacity(250);
-        for m in messages {
-            vec.push(*m);
-        }
-        vec
     }
 
     fn send_pause_messages(&self) {
@@ -188,52 +136,33 @@ impl Sequencer {
         }
     }
 
-    fn update_notes_on(&mut self) {
-        let message = &self.messages[self.message_index].1;
-        if message[3] == 3 && message[0] == MIDI_NOTE_ON {
-            self.notes_on[message[1] as usize] = message[2];
-        } else if message[3] == 3 && message[0] == MIDI_NOTE_OFF {
-            self.notes_on[message[1] as usize] = 0;
-        }
-    }
-
-    fn send_message_and_advance(&mut self) {
-        self.update_notes_on();
-        self.sender.send(self.messages[self.message_index].1.clone()).unwrap();
-        // Point to the next message
-        self.message_index += 1;
-        if self.message_index == self.messages.len() {
-            // Reached the end, restart from the beginning.
-            self.message_index = 0;
-        }
-        // Update target time for this message.
-        let message_time = self.message_time();
-        self.scheduler.next_target(message_time);
-    }
-
     fn reset_notes_on(&mut self) {
         for i in 0..self.notes_on.len() {
             self.notes_on[i] = 0;
         }
     }
 
-    fn pulses_to_us(&self, pulses: i32) -> i64 {
-        // quarters = pulses / ppq
-        // minutes = quarters / bpm
-        // seconds = minutes * 60
-        // us = seconds * 1_000_000
-        // us = sec * 60_000_000 * ((pulses / ppq) / bpm)
-        60_000_000 * (pulses as i64) / ((self.bpm * self.ppq) as i64)
+    fn reset_cursors(&mut self) {
+        for cursor in &mut self.cursors {
+            cursor.message_index = 0;
+            cursor.offset = 0;
+        }
     }
 
-    fn us_to_pulses(&self, us: i64) -> i32 {
-        let pulses = us * ((self.bpm * self.ppq) as i64) / 60_000_000;
-        debug_assert!(pulses <= i32::MAX as i64);
-        pulses as i32
+    fn pause(&mut self) {
+        self.send_pause_messages();
+        self.scheduler.pause();
     }
 
-    fn message_time(&self) -> i64 {
-        self.pulses_to_us(self.messages[self.message_index].0)
+    fn play(&mut self, reset: bool) {
+        if reset {
+            self.reset_notes_on();
+            self.reset_cursors();
+            self.scheduler.reset();
+        } else {
+            self.send_resume_messages();
+        }
+        self.scheduler.resume();
     }
 
     fn on_playing_message(&mut self, msg: &Message) {
@@ -241,8 +170,7 @@ impl Sequencer {
             /*if self.recording {
                 self.recording = false;
             }*/
-            self.send_pause_messages();
-            self.scheduler.pause();
+            self.pause();
         } /*else if self.recording && msg[3] == 3 &&
             (msg[0] == MIDI_NOTE_ON || msg[0] == MIDI_NOTE_OFF)
         {
@@ -256,13 +184,9 @@ impl Sequencer {
 
     fn on_paused_message(&mut self, msg: &Message) {
         if msg[3] == 1 && msg[0] == MIDI_START {
-            self.message_index = 0;
-            self.reset_notes_on();
-            self.scheduler.reset();
-            self.scheduler.resume();
+            self.play(true);
         } else if msg[3] == 1 && msg[0] == MIDI_CONTINUE {
-            self.send_resume_messages();
-            self.scheduler.resume();
+            self.play(false);
         } /*else if msg[3] == 1 && msg[0] == MIDI_UNDEF_TOGGLE_RECORD {
             self.recording = !self.recording;
             println!("recording {}",
@@ -278,9 +202,7 @@ impl Sequencer {
             // Disconnected means nothing else will be coming on this
             // channel. The program must be shutting down.
             Err(mpsc::TryRecvError::Disconnected) => return false,
-            Err(mpsc::TryRecvError::Empty) => {
-                self.scheduler.sleep_for_target();
-            }
+            Err(mpsc::TryRecvError::Empty) => {}
         };
         true
     }
@@ -294,21 +216,53 @@ impl Sequencer {
             // channel. The program must be shutting down.
             Err(mpsc::TryRecvError::Disconnected) => return false,
             Err(mpsc::TryRecvError::Empty) => {
-                // Sleep a bit before checking for messages again.
-                self.scheduler.sleep_for_wait();
+                self.scheduler.wait_paused();
             }
         };
         true
     }
 
-    pub fn run(mut self) {
-        self.scheduler.init_real_time_thread();
+    fn send_messages_at_cursor(&mut self, cursor_index: usize) {
+        let ref mut cursor = self.cursors[cursor_index];
+        let ref pattern = self.patterns[cursor.pattern_index];
+        let mut pattern_time = self.scheduler.time() - cursor.offset;
 
         loop {
+            let (message_time, ref message) =
+                pattern.messages[cursor.message_index];
+            if message_time > pattern_time {
+                break;
+            }
+
+            self.sender.send(message.clone()).unwrap();
+
+            if message[3] == 3 && message[0] == MIDI_NOTE_ON {
+                self.notes_on[message[1] as usize] = message[2];
+            } else if message[3] == 3 && message[0] == MIDI_NOTE_OFF {
+                self.notes_on[message[1] as usize] = 0;
+            }
+
+            cursor.message_index += 1;
+            if cursor.message_index == pattern.messages.len() {
+                cursor.message_index = 0;
+                cursor.offset += pattern_time;
+                pattern_time = 0;
+            }
+        }
+    }
+
+    fn send_outgoing_messages(&mut self) {
+        for cursor_index in 0..self.cursors.len() {
+            self.send_messages_at_cursor(cursor_index);
+        }
+    }
+
+    pub fn run(mut self) {
+        loop {
             if self.scheduler.is_active() {
-                if self.scheduler.is_target_time() {
-                    self.send_message_and_advance();
-                } else if !self.check_playing_messages() {
+                self.scheduler.wait_for_next_pulse();
+                self.send_outgoing_messages();
+                if !self.check_playing_messages() {
                     return;
                 }
             } else {

@@ -6,6 +6,6 @@ mod seq;
 
 pub use error::MidiError;
 pub use input::InputManager;
-pub use message::{Message, TimedMessage};
+pub use message::{Message, BasicMessage};
 pub use output::OutputManager;
 pub use seq::Sequencer;

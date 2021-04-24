@@ -18,6 +18,13 @@ struct Pattern {
 }
 
 impl Pattern {
+    pub fn new(length: u32) -> Self {
+        Pattern {
+            messages: vec![],
+            length,
+        }
+    }
+
     pub fn hard_coded_1() -> Self {
         Pattern {
             messages: vec![
@@ -99,7 +106,8 @@ pub struct Sequencer {
     receiver: mpsc::Receiver<Message>,
     sender: mpsc::Sender<Message>,
     patterns: Vec<Pattern>,
-    cursors: Vec<Cursor>,
+    play_cursors: Vec<Cursor>,
+    record_cursors: Vec<Cursor>,
     scheduler: Scheduler,
     notes_on: [u8; 128],
 }
@@ -111,8 +119,13 @@ impl Sequencer {
         Sequencer {
             receiver,
             sender,
-            patterns: vec![Pattern::hard_coded_1(), Pattern::hard_coded_2()],
-            cursors: vec![Cursor::new(0), Cursor::new(1)],
+            patterns: vec![
+                Pattern::hard_coded_1(),
+                Pattern::hard_coded_2(),
+                Pattern::new(384),
+            ],
+            play_cursors: vec![Cursor::new(0), Cursor::new(1)],
+            record_cursors: vec![Cursor::new(2)],
             scheduler: Scheduler::new(135000, 96),
             notes_on: [0; 128],
         }
@@ -143,7 +156,7 @@ impl Sequencer {
     }
 
     fn reset_cursors(&mut self) {
-        for cursor in &mut self.cursors {
+        for cursor in &mut self.play_cursors {
             cursor.message_index = 0;
             cursor.offset = 0;
         }
@@ -223,7 +236,7 @@ impl Sequencer {
     }
 
     fn send_messages_at_cursor(&mut self, cursor_index: usize) {
-        let ref mut cursor = self.cursors[cursor_index];
+        let ref mut cursor = self.play_cursors[cursor_index];
         let ref pattern = self.patterns[cursor.pattern_index];
         let mut pattern_time = self.scheduler.time() - cursor.offset;
 
@@ -252,7 +265,7 @@ impl Sequencer {
     }
 
     fn send_outgoing_messages(&mut self) {
-        for cursor_index in 0..self.cursors.len() {
+        for cursor_index in 0..self.play_cursors.len() {
             self.send_messages_at_cursor(cursor_index);
         }
     }
